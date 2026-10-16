@@ -1,0 +1,53 @@
+{
+  "name": "opencode2dsh",
+  "version": "1.0.0",
+  "description": "在 DSH（DeepSeek Harness）里使用 OpenCode Zen 的匿名免费模型：原生 LlmAdapter，无需 API Key，零运行时依赖。",
+  "type": "module",
+  "license": "MIT",
+  "author": "satanfire",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/satanfire/opencode2dsh.git"
+  },
+  "homepage": "https://github.com/satanfire/opencode2dsh#readme",
+  "bugs": "https://github.com/satanfire/opencode2dsh/issues",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "locale",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/offline.test.mjs",
+    "test:live": "node test/live.mjs"
+  },
+  "meta": {
+    "title": "OpenCode Zen 免费模型",
+    "description": "匿名接入 OpenCode Zen 免费通道：无需 API Key，探测可用的免费模型并注册进 DSH 模型选择器。"
+  },
+  "icon": "./icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "opencode",
+    "opencode-zen",
+    "free-model",
+    "llm-provider"
+  ]
+}
