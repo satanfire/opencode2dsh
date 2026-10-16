@@ -1,5 +1,5 @@
 {
-  "name": "opencode2dsh",
+  "name": "@satanfire/opencode2dsh",
   "version": "1.0.0",
   "description": "在 DSH（DeepSeek Harness）里使用 OpenCode Zen 的匿名免费模型：原生 LlmAdapter，无需 API Key，零运行时依赖。",
   "type": "module",

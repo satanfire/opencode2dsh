@@ -2,5 +2,5 @@
 # 插入一行 Host 插件，默认配置即可用；可覆盖项见 README。
 - insert:
     - id: opencode2dsh
-      name: opencode2dsh
+      name: '@satanfire/opencode2dsh'
       config: {}

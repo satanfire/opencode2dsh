@@ -43,13 +43,18 @@ dsh plugin --profile web add ./opencode2dsh
 装好后重启 `dsh web`，在模型选择器的 **OpenCode Zen 免费** 分组里选模型即可。
 不需要修改默认模型配置。
 
+> **包名与 provider 名不是一回事。**
+> 包名是 `@satanfire/opencode2dsh`，装到 `node_modules/@satanfire/opencode2dsh`；
+> provider 名是 `opencode2dsh`，也就是模型选择器里的分组，以及请求里的 `provider` 字段。
+> 两者都可以用配置里的 `providerId` 单独调整（包名除外）。
+
 ## 配置
 
 默认配置开箱即用。需要覆盖时，在 profile 的 `cordis.patch.yml` 里改这一行：
 
 ```yaml
 - id: opencode2dsh
-  name: opencode2dsh
+  name: '@satanfire/opencode2dsh'
   config:
     refreshSeconds: 900
 ```
@@ -65,7 +70,7 @@ dsh plugin --profile web add ./opencode2dsh
 
 ```yaml
 - id: opencode2dsh
-  name: opencode2dsh
+  name: '@satanfire/opencode2dsh'
   config:
     modelOverrides:
       big-pickle:
