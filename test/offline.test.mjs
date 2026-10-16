@@ -6,7 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -313,6 +313,25 @@ test('目录刷新失败时保留现有名单并记录原因', async () => {
 	assert.ok(catalog.ids().length > 0, '必须有兜底名单可用');
 	assert.equal(catalog.lastError(), 'offline');
 	assert.equal(JSON.parse(readFileSync(cachePath, 'utf8')).lastError, 'offline');
+	catalog.stop();
+});
+
+test('网络抖动保留已知可用模型，确定性拒绝照旧剔除', async () => {
+	const dir = mkdtempSync(join(tmpdir(), 'oc2dsh-'));
+	const cachePath = join(dir, 'catalog.json');
+	// 上一轮的可用名单：一个已被地区封锁，一个仍可用，一个从未出现过。
+	writeFileSync(cachePath, JSON.stringify({ version: 1, at: 0, ids: ['region-free', 'steady-free'], lastError: '' }), 'utf8');
+	const fetchImpl = async (url, init) => {
+		if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'region-free' }, { id: 'steady-free' }, { id: 'fresh-free' }] });
+		const { model } = JSON.parse(init.body);
+		if (model === 'region-free') return jsonResponse(JSON.stringify({ error: { type: 'RegionError', message: 'This model is not available in your country' } }), { status: 403 });
+		if (model === 'steady-free') throw new Error('connect timeout'); // 网络抖动：两次探测都没有结论
+		if (model === 'fresh-free') throw new Error('connect timeout'); // 从未成功过的模型不给豁免
+		throw new Error(`意外模型 ${model}`);
+	};
+	const catalog = createCatalog({ refreshSeconds: 3600, startDelayMs: 0, cachePath, fetchImpl });
+	assert.ok(await catalog.refresh());
+	assert.deepEqual(catalog.ids(), ['steady-free'], '确定性拒绝要剔除，网络抖动要保留已知可用，未验证过的不给豁免');
 	catalog.stop();
 });
 
