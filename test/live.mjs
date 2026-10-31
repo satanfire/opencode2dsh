@@ -12,16 +12,22 @@ import { join } from 'node:path';
 
 import { createCatalog } from '../lib/catalog.js';
 import { ZenAdapter } from '../lib/adapter.js';
+import { createTransport } from '../lib/transport.js';
 
 const log = (level, message) => console.log(`  [${level}] ${message}`);
 
+const logger = { info: (message) => log('info', message), warn: (message) => log('warn', message), debug: () => {} };
+const transport = createTransport({ transport: process.env.OPENCODE2DSH_TRANSPORT ?? 'auto', logger });
+const environment = { directory: process.cwd(), root: process.cwd(), gitRepo: false, platform: process.platform };
 const catalog = createCatalog({
 	refreshSeconds: 3600,
 	startDelayMs: 0,
 	cachePath: join(mkdtempSync(join(tmpdir(), 'oc2dsh-')), 'catalog.json'),
-	logger: { info: (message) => log('info', message), warn: (message) => log('warn', message) },
+	logger,
+	transport,
+	environment,
 });
-const adapter = new ZenAdapter({ providerId: 'opencode2dsh', catalog, requestTimeoutMs: 300000 });
+const adapter = new ZenAdapter({ providerId: 'opencode2dsh', catalog, requestTimeoutMs: 300000, transport, wire: { environment } });
 
 async function collect(options) {
 	// 网络层瞬时拥塞（TRANSPORT / TIMEOUT）时重试，避免把抖动当成功能缺陷。

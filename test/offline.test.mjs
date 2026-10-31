@@ -16,10 +16,14 @@ import {
 	canonicalSessionID,
 	deriveRequestIDs,
 	disguiseHeaders,
+	environmentBlock,
+	environmentInstructions,
 	invertedTimestampHex,
+	projectIDFor,
+	traceHeaders,
 } from '../lib/protocol.js';
 import { metaFor } from '../lib/models.js';
-import { toWireMessages } from '../lib/messages.js';
+import { toWireMessages, withEnvironment } from '../lib/messages.js';
 import { llmError, upstreamError } from '../lib/errors.js';
 import { parseSse, translate } from '../lib/stream.js';
 import { createCatalog, discoverFreeModels, probeModel } from '../lib/catalog.js';
@@ -93,18 +97,49 @@ test('deriveRequestIDs 给出会话/请求/项目三个关联 id', () => {
 	assert.match(first.session, CANONICAL_SESSION_PATTERN);
 	assert.equal(first.session, second.session, '同一会话必须复用会话 id');
 	assert.match(first.request, /^req_[0-9a-f]{24}$/);
+	assert.match(first.project, /^[0-9a-f]{40}$/, 'OpenCode 的项目 id 是 40 位十六进制');
 	assert.notEqual(first.request, second.request, '每个请求要有新的 request id');
 	assert.equal(first.project, second.project, '项目 id 应当稳定');
 });
 
-test('disguiseHeaders 与 CLI 同形：UA 无后缀，会话头一致，凭据是 public', () => {
+test('disguiseHeaders 对齐 OpenCode 源码：UA 是三段式，会话头成对出现，凭据是 public', () => {
 	const headers = disguiseHeaders(deriveRequestIDs([{ role: 'user', content: 'x' }]));
-	assert.match(headers['user-agent'], /^opencode\/\d+\.\d+\.\d+ \([^)]+\)$/);
+	assert.equal(headers['user-agent'], 'opencode/latest/2.0.29/cli');
 	assert.equal(headers.authorization, 'Bearer public');
 	assert.equal(headers['x-opencode-client'], 'cli');
 	const session = headers['x-opencode-session'];
+	assert.match(session, CANONICAL_SESSION_PATTERN);
+	assert.equal(headers['x-opencode-session-id'], session, '上游门禁要求这个头存在');
 	assert.equal(headers['x-session-affinity'], session);
 	assert.equal(headers['X-Session-Id'], session);
+	assert.match(headers['x-opencode-project'], /^[0-9a-f]{40}$/);
+	assert.match(headers.b3, /^[0-9a-f]{32}-[0-9a-f]{16}-1-[0-9a-f]{16}$/);
+	assert.match(headers.traceparent, /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+});
+
+test('traceHeaders 每次请求都是新 trace', () => {
+	assert.notEqual(traceHeaders().traceparent, traceHeaders().traceparent);
+});
+
+test('projectIDFor 对同一项目稳定、不同项目不同', () => {
+	assert.equal(projectIDFor('/a'), projectIDFor('/a'));
+	assert.notEqual(projectIDFor('/a'), projectIDFor('/b'));
+});
+
+test('environmentBlock 复刻 OpenCode 的 env 块（门禁要求带 Working directory）', () => {
+	const block = environmentBlock({ directory: '/work/demo', root: '/work', gitRepo: true, platform: 'darwin', tmp: '/private/tmp' });
+	assert.ok(block.startsWith('<env>\n  Working directory: /work/demo\n'), '首行必须是工作目录');
+	assert.ok(block.includes('  Workspace root folder: /work\n'));
+	assert.ok(block.includes('  Is directory a git repo: yes\n'));
+	assert.ok(block.includes('  Platform: darwin\n'));
+	assert.ok(block.includes('Prefer /private/tmp over generic system temporary directories'));
+	assert.ok(block.endsWith('</env>'));
+});
+
+test('environmentInstructions 带日期行 + env 块', () => {
+	const text = environmentInstructions({ directory: '/w', root: '/w' }, new Date('2026-10-31T00:00:00Z'));
+	assert.match(text, /^Today's date: /);
+	assert.ok(text.includes('<env>') && text.includes('Working directory: /w'));
 });
 
 // #endregion
@@ -138,6 +173,14 @@ test('缺 read 时只补缺失的那个', () => {
 // #endregion
 
 // #region 消息映射
+
+test('withEnvironment 追加到已有 system，缺失时补一条', () => {
+	const withSystem = withEnvironment([{ role: 'system', content: '你是助手' }, { role: 'user', content: '你好' }], 'ENV');
+	assert.equal(withSystem[0].content, '你是助手\n\nENV');
+	const withoutSystem = withEnvironment([{ role: 'user', content: '你好' }], 'ENV');
+	assert.deepEqual(withoutSystem[0], { role: 'system', content: 'ENV' });
+	assert.equal(withoutSystem.length, 2);
+});
 
 test('system 选项与历史消息按顺序映射', () => {
 	const wire = toWireMessages({
@@ -204,6 +247,12 @@ test('地区限制映射成 MODEL_UNAVAILABLE，普通 403 映射成 AUTH', asyn
 	assert.equal(region.code, 'MODEL_UNAVAILABLE');
 	const denied = await upstreamError(jsonResponse({ error: { type: 'FreeTierError', message: 'only from within OpenCode' } }, { status: 403 }), 'm');
 	assert.equal(denied.code, 'AUTH');
+});
+
+test('免费门禁拒绝（429 FreeUsageLimitError）是确定性失败，不进重试', async () => {
+	const error = await upstreamError(jsonResponse({ error: { type: 'FreeUsageLimitError', message: 'Free usage limit reached. Free models work in OpenCode' } }, { status: 429 }), 'm');
+	assert.equal(error.code, 'MODEL_UNAVAILABLE');
+	assert.equal(error.failure.status, 429);
 });
 
 test('5xx 映射成可重试的 SERVER', async () => {
@@ -277,9 +326,9 @@ test('discoverFreeModels 只保留免费候选并排除 test', async () => {
 	assert.deepEqual(await discoverFreeModels({ fetchImpl }), ['alpha-free', 'big-pickle']);
 });
 
-test('probeModel 把 200 / 429 视为放行，把地区拒绝与协议不支持排除', async () => {
+test('probeModel 只把 200 视为可用：429 是门禁拒绝，地区拒绝与协议不支持也排除', async () => {
 	assert.equal(await probeModel('ok', { fetchImpl: async () => jsonResponse({}, { status: 200 }) }), 'ok');
-	assert.equal(await probeModel('busy', { fetchImpl: async () => jsonResponse({}, { status: 429 }) }), 'ok');
+	assert.equal(await probeModel('blocked', { fetchImpl: async () => jsonResponse(JSON.stringify({ error: { type: 'FreeUsageLimitError' } }), { status: 429 }) }), 'rejected');
 	const region = async () => jsonResponse(JSON.stringify({ error: { message: 'This model is not available in your country' } }), { status: 403 });
 	assert.equal(await probeModel('region', { fetchImpl: region }), 'rejected');
 	const unsupported = async () => jsonResponse(JSON.stringify({ error: { type: 'ModelProtocolUnsupported' } }), { status: 400 });
